@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realm Landmark Point Graph & Delaunay Triangulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script type="module">
+      import {Delaunay} from 'https://cdn.jsdelivr.net/npm/d3-delaunay@6/+esm';
+      window.Delaunay = Delaunay;
+      window.dispatchEvent(new Event('delaunay-loaded'));
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        canvas { touch-action: none; background: radial-gradient(circle at center, #0f172a 0%, #020617 100%); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    </style>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 flex flex-col overflow-hidden">
+
+    <!-- Header Navbar -->
+    <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0 z-20">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-500/10">
+                <i class="fa-solid fa-project-diagram text-lg"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg text-slate-100 tracking-tight">Realm Topography & Point Graph</h1>
+                <p class="text-xs text-slate-400">Interactive Delaunay Triangulation of 57 Normalized Landmark Coordinates</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <!-- Search Bar -->
+            <div class="relative hidden sm:block">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                    <i class="fa-solid fa-search text-xs"></i>
+                </span>
+                <input type="text" id="searchInput" placeholder="Search landmark..." class="bg-slate-800/80 border border-slate-700 text-xs rounded-lg pl-9 pr-4 py-2 w-48 lg:w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-200 placeholder-slate-500 transition-all">
+            </div>
+
+            <!-- Action Buttons -->
+            <button id="toggleMapBgBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-md shadow-indigo-600/20" title="Toggle Map Background">
+                <i class="fa-solid fa-image"></i>
+                <span class="hidden md:inline">Map Image: On</span>
+            </button>
+            <button id="resetViewBtn" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-sm" title="Reset Zoom & Pan">
+                <i class="fa-solid fa-compress"></i>
+                <span class="hidden md:inline">Reset View</span>
+            </button>
+            <button id="toggleEdgesBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-md shadow-indigo-600/20" title="Toggle Triangulation Edges">
+                <i class="fa-solid fa-network-wired"></i>
+                <span class="hidden md:inline">Edges: On</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- Canvas Container -->
+        <div class="flex-1 relative overflow-hidden" id="canvasContainer">
+            <canvas id="graphCanvas" class="w-full h-full cursor-grab active:cursor-grabbing"></canvas>
+
+            <!-- Floating Zoom Controls -->
+            <div class="absolute bottom-6 left-6 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl p-1.5 flex flex-col space-y-1 shadow-xl z-10">
+                <button id="zoomInBtn" class="w-9 h-9 rounded-lg hover:bg-slate-800 flex items-center justify-center text-slate-300 transition" title="Zoom In">
+                    <i class="fa-solid fa-plus text-xs"></i>
+                </button>
+                <div class="h-px bg-slate-800 mx-1"></div>
+                <button id="zoomOutBtn" class="w-9 h-9 rounded-lg hover:bg-slate-800 flex items-center justify-center text-slate-300 transition" title="Zoom Out">
+                    <i class="fa-solid fa-minus text-xs"></i>
+                </button>
+            </div>
+
+            <!-- Hover Tooltip Overlay -->
+            <div id="tooltip" class="absolute hidden pointer-events-none bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl p-3 shadow-2xl text-xs z-30 max-w-xs transition-opacity duration-150">
+                <div class="flex items-center space-x-2 mb-1">
+                    <span id="tooltipBadge" class="w-2.5 h-2.5 rounded-full"></span>
+                    <span id="tooltipCategory" class="font-semibold uppercase tracking-wider text-[10px] text-slate-400">Category</span>
+                </div>
+                <div id="tooltipTitle" class="font-bold text-sm text-slate-100 mb-1">Landmark Name</div>
+                <div class="text-slate-400 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] border-t border-slate-800 pt-1 mt-1">
+                    <div>ID: <span id="tooltipId" class="text-slate-200 font-mono"></span></div>
+                    <div>Grid X: <span id="tooltipX" class="text-slate-200 font-mono"></span></div>
+                    <div class="col-span-2">Grid Y: <span id="tooltipY" class="text-slate-200 font-mono"></span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar / Control & Inspector Panel -->
+        <aside class="w-80 lg:w-96 bg-slate-900/90 backdrop-blur-md border-l border-slate-800 flex flex-col shrink-0 z-10 shadow-2xl">
+            <!-- Tabs / Header -->
+            <div class="p-4 border-b border-slate-800">
+                <h2 class="font-semibold text-sm text-slate-200 mb-3 flex items-center justify-between">
+                    <span>Legend & Filters</span>
+                    <span id="visibleCount" class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">57/57 Visible</span>
+                </h2>
+                
+                <!-- Category Toggles -->
+                <div class="space-y-2" id="categoryFilters">
+                    <!-- Forest -->
+                    <label class="flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition">
+                        <div class="flex items-center space-x-2.5">
+                            <span class="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
+                            <span class="text-xs font-medium text-slate-200">Forest</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-slate-500 font-mono" id="count-forest">6</span>
+                            <input type="checkbox" data-category="forest" checked class="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-emerald-500 w-4 h-4 cursor-pointer">
+                        </div>
+                    </label>
+
+                    <!-- Mountain -->
+                    <label class="flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition">
+                        <div class="flex items-center space-x-2.5">
+                            <span class="w-3 h-3 rounded-full bg-slate-400 shadow-sm shadow-slate-400/50"></span>
+                            <span class="text-xs font-medium text-slate-200">Mountain</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-slate-500 font-mono" id="count-mountain">14</span>
+                            <input type="checkbox" data-category="mountain" checked class="rounded bg-slate-900 border-slate-700 text-slate-400 focus:ring-slate-400 w-4 h-4 cursor-pointer">
+                        </div>
+                    </label>
+
+                    <!-- Lakes -->
+                    <label class="flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition">
+                        <div class="flex items-center space-x-2.5">
+                            <span class="w-3 h-3 rounded-full bg-sky-400 shadow-sm shadow-sky-400/50"></span>
+                            <span class="text-xs font-medium text-slate-200">Lakes</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-slate-500 font-mono" id="count-lake">9</span>
+                            <input type="checkbox" data-category="lake" checked class="rounded bg-slate-900 border-slate-700 text-sky-400 focus:ring-sky-400 w-4 h-4 cursor-pointer">
+                        </div>
+                    </label>
+
+                    <!-- Open Land -->
+                    <label class="flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition">
+                        <div class="flex items-center space-x-2.5">
+                            <span class="w-3 h-3 rounded-full bg-amber-500 shadow-sm shadow-amber-500/50"></span>
+                            <span class="text-xs font-medium text-slate-200">Open Land</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-slate-500 font-mono" id="count-open_land">12</span>
+                            <input type="checkbox" data-category="open_land" checked class="rounded bg-slate-900 border-slate-700 text-amber-500 focus:ring-amber-500 w-4 h-4 cursor-pointer">
+                        </div>
+                    </label>
+
+                    <!-- Towns -->
+                    <label class="flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition">
+                        <div class="flex items-center space-x-2.5">
+                            <span class="w-3 h-3 rounded-full bg-purple-500 shadow-sm shadow-purple-500/50"></span>
+                            <span class="text-xs font-medium text-slate-200">Towns</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-slate-500 font-mono" id="count-town">16</span>
+                            <input type="checkbox" data-category="town" checked class="rounded bg-slate-900 border-slate-700 text-purple-500 focus:ring-purple-500 w-4 h-4 cursor-pointer">
+                        </div>
+                    </label>
+
+                    <!-- Map Opacity Slider -->
+                    <div class="p-2 rounded-lg bg-slate-800/40 border border-slate-800 mt-2">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-medium text-slate-300 flex items-center space-x-1.5">
+                                <i class="fa-solid fa-sliders text-[10px] text-slate-400"></i>
+                                <span>Map Image Opacity</span>
+                            </span>
+                            <span id="opacityVal" class="text-[10px] font-mono text-slate-400">80%</span>
+                        </div>
+                        <input type="range" id="mapOpacitySlider" min="10" max="100" value="80" class="w-full accent-indigo-500 bg-slate-700 h-1 rounded-lg cursor-pointer">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer Info -->
+            <div class="p-3 border-t border-slate-800 bg-slate-950/40 text-[10px] text-slate-500 flex items-center justify-between">
+                <span>Normalized Grid: 0 to 100</span>
+                <span>Delaunay Graph Engine</span>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Application Script -->
+    <script>
+        // Full Dataset of all 57 Landmarks
+        const landmarksData = [
+            // Lakes (Blue) - 9
+            { id: "Blue-1", category: "lake", number: 1, name: "Loch Dilossosa", x: 17.8, y: 40.6 },
+            { id: "Blue-2", category: "lake", number: 2, name: "Lake Velvydesa", x: 38.5, y: 35.1 },
+            { id: "Blue-3", category: "lake", number: 3, name: "Kasloposo Shores", x: 52.7, y: 51.3 },
+            { id: "Blue-4", category: "lake", number: 4, name: "Piimria Flood", x: 35.1, y: 46.4 },
+            { id: "Blue-5", category: "lake", number: 5, name: "Kiesnaci Tarn", x: 14.7, y: 67.2 },
+            { id: "Blue-6", category: "lake", number: 6, name: "Lake Iramre", x: 32.6, y: 90.8 },
+            { id: "Blue-7", category: "lake", number: 7, name: "Khernoppope Deeps", x: 37.3, y: 87.9 },
+            { id: "Blue-8", category: "lake", number: 8, name: "Mere Doramthari", x: 65.7, y: 91.3 },
+            { id: "Blue-9", category: "lake", number: 9, name: "Loch Kaspoppone", x: 73.9, y: 94.0 },
+
+            // Forest (Green) - 6
+            { id: "Green-1", category: "forest", number: 1, name: "Porordoso Thicket", x: 26.0, y: 27.2 },
+            { id: "Green-2", category: "forest", number: 2, name: "Dalolrane Treetops", x: 43.3, y: 31.3 },
+            { id: "Green-3", category: "forest", number: 3, name: "Tholysnasa Copse", x: 27.3, y: 44.1 },
+            { id: "Green-4", category: "forest", number: 4, name: "Gravanaci Willows", x: 5.7, y: 72.8 },
+            { id: "Green-5", category: "forest", number: 5, name: "Valosine Canopy", x: 56.7, y: 75.0 },
+            { id: "Green-6", category: "forest", number: 6, name: "North Plateau", x: 49.5, y: 87.0 },
+
+            // Open Land (Orange) - 12
+            { id: "Orange-1", category: "open_land", number: 1, name: "Periasana Sweep", x: 7.3, y: 19.2 },
+            { id: "Orange-2", category: "open_land", number: 2, name: "Nolelusa Hills", x: 31.5, y: 26.9 },
+            { id: "Orange-3", category: "open_land", number: 3, name: "Hopsialrino Sweep", x: 45.8, y: 41.5 },
+            { id: "Orange-4", category: "open_land", number: 4, name: "Porrialona Expanse", x: 65.5, y: 39.8 },
+            { id: "Orange-5", category: "open_land", number: 5, name: "Kiilosi Prairie", x: 83.9, y: 46.4 },
+            { id: "Orange-6", category: "open_land", number: 6, name: "Polsiasthera Sweep", x: 65.9, y: 50.2 },
+            { id: "Orange-7", category: "open_land", number: 7, name: "Narnoproni Shrubland", x: 22.1, y: 51.3 },
+            { id: "Orange-8", category: "open_land", number: 8, name: "Dalosroko Flats", x: 28.5, y: 65.8 },
+            { id: "Orange-9", category: "open_land", number: 9, name: "Verirro Steppe", x: 4.2, y: 61.2 },
+            { id: "Orange-10", category: "open_land", number: 10, name: "Nolandvori Lowlands", x: 22.1, y: 79.1 },
+            { id: "Orange-11", category: "open_land", number: 11, name: "Kaeolseno Grasslands", x: 54.0, y: 84.0 },
+            { id: "Orange-12", category: "open_land", number: 12, name: "Darisuse Marsh", x: 87.1, y: 95.7 },
+
+            // Towns (Purple) - 16
+            { id: "Purple-1", category: "town", number: 1, name: "Gigsal March", x: 16.3, y: 3.8 },
+            { id: "Purple-2", category: "town", number: 2, name: "Kumvath Bridge", x: 2.3, y: 26.7 },
+            { id: "Purple-3", category: "town", number: 3, name: "Moskvok Steps", x: 17.9, y: 28.2 },
+            { id: "Purple-4", category: "town", number: 4, name: "Mogruth Edge", x: 21.1, y: 38.9 },
+            { id: "Purple-5", category: "town", number: 5, name: "Thrysrok Steps", x: 31.5, y: 34.8 },
+            { id: "Purple-6", category: "town", number: 6, name: "Skizvath Watch", x: 37.5, y: 31.6 },
+            { id: "Purple-7", category: "town", number: 7, name: "Fort Zarzugh", x: 54.0, y: 34.8 },
+            { id: "Purple-8", category: "town", number: 8, name: "Vrixmok Steps", x: 69.6, y: 37.7 },
+            { id: "Purple-9", category: "town", number: 9, name: "Camp Govdru", x: 88.4, y: 37.4 },
+            { id: "Purple-10", category: "town", number: 10, name: "Gomar Steps", x: 85.2, y: 51.9 },
+            { id: "Purple-11", category: "town", number: 11, name: "Crack-poof Forge", x: 60.1, y: 57.6 },
+            { id: "Purple-12", category: "town", number: 12, name: "Kagdru Bridge", x: 56.6, y: 48.9 },
+            { id: "Purple-13", category: "town", number: 13, name: "Zarzuk Place", x: 39.9, y: 44.6 },
+            { id: "Purple-14", category: "town", number: 14, name: "Gizrath Trail", x: 16.9, y: 59.1 },
+            { id: "Purple-15", category: "town", number: 15, name: "Vraghrash Bend", x: 25.4, y: 71.8 },
+            { id: "Purple-16", category: "town", number: 16, name: "Ghavhogh Keep", x: 5.2, y: 77.9 },
+
+            // Mountain (Grey) - 14
+            { id: "Grey-1", category: "mountain", number: 1, name: "Kasiasadi Bluff", x: 23.4, y: 18.3 },
+            { id: "Grey-2", category: "mountain", number: 2, name: "Chenonsana Range", x: 16.9, y: 31.6 },
+            { id: "Grey-3", category: "mountain", number: 3, name: "Varropasa Scar", x: 50.7, y: 31.3 },
+            { id: "Grey-4", category: "mountain", number: 4, name: "Beindpasa Spire", x: 75.4, y: 46.3 },
+            { id: "Grey-5", category: "mountain", number: 5, name: "Tholpopsoni Heights", x: 60.1, y: 44.7 },
+            { id: "Grey-6", category: "mountain", number: 6, name: "Kirysnosa Loft", x: 37.5, y: 53.4 },
+            { id: "Grey-7", category: "mountain", number: 7, name: "Peltinode Alps", x: 34.9, y: 60.3 },
+            { id: "Grey-8", category: "mountain", number: 8, name: "Grosiardico Range", x: 20.5, y: 64.0 },
+            { id: "Grey-9", category: "mountain", number: 9, name: "Deondrese Spire", x: 13.7, y: 90.2 },
+            { id: "Grey-10", category: "mountain", number: 10, name: "Virdonlisi Rise", x: 44.2, y: 80.9 },
+            { id: "Grey-11", category: "mountain", number: 11, name: "Sanopthori Spine", x: 69.6, y: 79.4 },
+            { id: "Grey-12", category: "mountain", number: 12, name: "Virnonnica Alps", x: 90.4, y: 78.3 },
+            { id: "Grey-13", category: "mountain", number: 13, name: "Thelosnasi Range", x: 82.6, y: 87.5 },
+            { id: "Grey-14", category: "mountain", number: 14, name: "Kesnernosa Summit", x: 69.6, y: 90.2 }
+        ];
+
+        // Category Visual Config
+        const categoryConfig = {
+            forest: { name: "Forest", color: "#10b981", badgeBg: "bg-emerald-500" },
+            mountain: { name: "Mountain", color: "#94a3b8", badgeBg: "bg-slate-400" },
+            lake: { name: "Lakes", color: "#0ea5e9", badgeBg: "bg-sky-400" },
+            open_land: { name: "Open Land", color: "#f59e0b", badgeBg: "bg-amber-500" },
+            town: { name: "Towns", color: "#a855f7", badgeBg: "bg-purple-500" }
+        };
+
+        // App State
+        let activeCategories = { forest: true, mountain: true, lake: true, open_land: true, town: true };
+        let searchQuery = "";
+        let showEdges = true;
+        let showMapBg = true;
+        let mapOpacity = 0.8;
+        let selectedLandmark = null;
+        let hoveredLandmark = null;
+
+        // Load Map Image Asset
+        const mapImg = new Image();
+        mapImg.src = 'image_89ae9d.jpg';
+        mapImg.onload = () => drawGraph();
+        mapImg.onerror = () => {
+            // Fallback placeholder image URL if local asset relative path fails
+            mapImg.src = 'https://placehold.co/800x680/1e293b/94a3b8?text=Realm+Map';
+        };
+
+        // Viewport Transform State
+        const canvas = document.getElementById('graphCanvas');
+        const ctx = canvas.getContext('2d');
+        let scale = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+
+        // Initialize Canvas & Size
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth * window.devicePixelRatio;
+            canvas.height = container.clientHeight * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            drawGraph();
+        }
+
+        // Convert Normalized Coordinates (0-100) to World Space
+        function getMapDimensions() {
+            const container = canvas.parentElement;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            const size = Math.min(w, h) * 0.85;
+            const originX = (w - size) / 2;
+            const originY = (h - size) / 2;
+            return { size, originX, originY };
+        }
+
+        function normToScreen(nx, ny) {
+            const { size, originX, originY } = getMapDimensions();
+            // Note: invert y so y=0 is at bottom, y=100 is at top
+            const wx = originX + (nx / 100) * size;
+            const wy = originY + ((100 - ny) / 100) * size;
+            return {
+                x: wx * scale + offsetX,
+                y: wy * scale + offsetY
+            };
+        }
+
+        function screenToNorm(sx, sy) {
+            const { size, originX, originY } = getMapDimensions();
+            const unscaledX = (sx - offsetX) / scale;
+            const unscaledY = (sy - offsetY) / scale;
+            const nx = ((unscaledX - originX) / size) * 100;
+            const ny = 100 - (((unscaledY - originY) / size) * 100);
+            return { x: nx, y: ny };
+        }
+
+        // Main Draw Loop
+        function drawGraph() {
+            const container = canvas.parentElement;
+            ctx.clearRect(0, 0, container.clientWidth, container.clientHeight);
+
+            const { size, originX, originY } = getMapDimensions();
+
+            // Render Map Image Background
+            if (showMapBg && mapImg.complete && mapImg.naturalWidth !== 0) {
+                ctx.save();
+                ctx.globalAlpha = mapOpacity;
+
+                const bgLeft = originX * scale + offsetX;
+                const bgTop = originY * scale + offsetY;
+                const bgSize = size * scale;
+
+                ctx.drawImage(mapImg, bgLeft, bgTop, bgSize, bgSize);
+                ctx.restore();
+            }
+
+            // Filter Landmarks
+            const visibleLandmarks = landmarksData.filter(d => {
+                if (!activeCategories[d.category]) return false;
+                if (searchQuery && !d.name.toLowerCase().includes(searchQuery) && !d.id.toLowerCase().includes(searchQuery)) return false;
+                return true;
+            });
+
+            // Update visible counter
+            document.getElementById('visibleCount').textContent = `${visibleLandmarks.length}/${landmarksData.length} Visible`;
+
+            // Compute Screen Positions
+            const pointsWithScreen = visibleLandmarks.map(d => {
+                const pos = normToScreen(d.x, d.y);
+                return { ...d, sx: pos.x, sy: pos.y };
+            });
+
+            // Delaunay Triangulation & Edges
+            let delaunayEdges = [];
+            if (showEdges && pointsWithScreen.length >= 3 && window.Delaunay) {
+                try {
+                    const coords = pointsWithScreen.map(p => [p.sx, p.sy]);
+                    const delaunay = window.Delaunay.from(coords);
+                    const { halfedges, triangles } = delaunay;
+                    
+                    const edgeSet = new Set();
+                    for (let i = 0; i < halfedges.length; i++) {
+                        if (halfedges[i] > i) {
+                            const p1 = triangles[i];
+                            const p2 = triangles[delaunay.nextHalfedge(i)];
+                            const key = p1 < p2 ? `${p1}-${p2}` : `${p2}-${p1}`;
+                            if (!edgeSet.has(key)) {
+                                edgeSet.add(key);
+                                delaunayEdges.push([pointsWithScreen[p1], pointsWithScreen[p2]]);
+                            }
+                        }
+                    }
+
+                    // Draw Edges
+                    ctx.save();
+                    ctx.lineWidth = 1;
+                    delaunayEdges.forEach(([a, b]) => {
+                        const isConnectedToSelected = selectedLandmark && (a.id === selectedLandmark.id || b.id === selectedLandmark.id);
+                        const isConnectedToHover = hoveredLandmark && (a.id === hoveredLandmark.id || b.id === hoveredLandmark.id);
+
+                        if (isConnectedToSelected || isConnectedToHover) {
+                            ctx.strokeStyle = '#6366f1';
+                            ctx.lineWidth = 2.5;
+                        } else {
+                            ctx.strokeStyle = showMapBg ? 'rgba(15, 23, 42, 0.45)' : 'rgba(100, 116, 139, 0.25)';
+                            ctx.lineWidth = 1;
+                        }
+                        ctx.beginPath();
+                        ctx.moveTo(a.sx, a.sy);
+                        ctx.lineTo(b.sx, b.sy);
+                        ctx.stroke();
+                    });
+                    ctx.restore();
+                } catch (e) {
+                    console.error("Delaunay error:", e);
+                }
+            }
+
+            // Draw Nodes
+            pointsWithScreen.forEach(p => {
+                const isSelected = selectedLandmark && selectedLandmark.id === p.id;
+                const isHovered = hoveredLandmark && hoveredLandmark.id === p.id;
+                const color = categoryConfig[p.category].color;
+
+                ctx.save();
+                
+                // Outer glow for selected or hovered
+                if (isSelected || isHovered) {
+                    ctx.beginPath();
+                    ctx.arc(p.sx, p.sy, isSelected ? 12 * scale : 10 * scale, 0, 2 * Math.PI);
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.3;
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                }
+
+                // Node Circle
+                ctx.beginPath();
+                const radius = Math.max(4, Math.min(8, 6 * scale));
+                ctx.arc(p.sx, p.sy, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 8;
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = isSelected ? 2.5 : 1.5;
+                ctx.stroke();
+
+                // Label if zoomed in or hovered/selected
+                if (scale > 1.3 || isSelected || isHovered) {
+                    ctx.font = `${Math.max(10, Math.min(12, 11 * scale))}px Inter, sans-serif`;
+                    ctx.fillStyle = '#e2e8f0';
+                    ctx.shadowBlur = 4;
+                    ctx.shadowColor = '#000000';
+                    ctx.fillText(p.name, p.sx + 12, p.sy + 4);
+                }
+
+                ctx.restore();
+            });
+        }
+
+        // Get Delaunay Neighbors for a Landmark
+        function getNeighbors(targetLandmark) {
+            const visibleLandmarks = landmarksData.filter(d => activeCategories[d.category]);
+            if (visibleLandmarks.length < 3 || !window.Delaunay) return [];
+            
+            const pointsWithScreen = visibleLandmarks.map(d => ({ ...d, ...normToScreen(d.x, d.y) }));
+            const targetIndex = pointsWithScreen.findIndex(p => p.id === targetLandmark.id);
+            if (targetIndex === -1) return [];
+
+            try {
+                const coords = pointsWithScreen.map(p => [p.sx, p.sy]);
+                const delaunay = window.Delaunay.from(coords);
+                const neighborIndexes = Array.from(delaunay.neighbors(targetIndex));
+                return neighborIndexes.map(idx => pointsWithScreen[idx]);
+            } catch (e) {
+                return [];
+            }
+        }
+
+        // Inspector Panel Update
+        function updateInspector(landmark) {
+            selectedLandmark = landmark;
+            const emptyEl = document.getElementById('inspectorEmpty');
+            const contentEl = document.getElementById('inspectorContent');
+
+            if (!landmark) {
+                emptyEl.classList.remove('hidden');
+                contentEl.classList.add('hidden');
+                drawGraph();
+                return;
+            }
+
+            emptyEl.classList.add('hidden');
+            contentEl.classList.remove('hidden');
+
+            const config = categoryConfig[landmark.category];
+            document.getElementById('inspectorCategory').textContent = config.name;
+            document.getElementById('inspectorCategoryDot').className = `absolute top-0 left-0 bottom-0 w-1.5 ${config.badgeBg}`;
+            document.getElementById('inspectorTitle').textContent = landmark.name;
+            document.getElementById('inspectorId').textContent = landmark.id;
+            document.getElementById('inspectorCoords').textContent = `(${landmark.x.toFixed(1)}, ${landmark.y.toFixed(1)})`;
+
+            // Populate Neighbors
+            const neighbors = getNeighbors(landmark);
+            document.getElementById('neighborCount').textContent = `${neighbors.length} connections`;
+            const listEl = document.getElementById('neighborList');
+            listEl.innerHTML = '';
+
+            if (neighbors.length === 0) {
+                listEl.innerHTML = '<li class="text-xs text-slate-500 italic">No direct neighbors found in current view.</li>';
+            } else {
+                neighbors.forEach(n => {
+                    const nConfig = categoryConfig[n.category];
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between p-2 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 cursor-pointer transition';
+                    li.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2 h-2 rounded-full ${nConfig.badgeBg}"></span>
+                            <span class="text-xs text-slate-200 font-medium">${n.name}</span>
+                        </div>
+                        <span class="text-[10px] font-mono text-slate-400">${n.id}</span>
+                    `;
+                    li.addEventListener('click', () => {
+                        updateInspector(n);
+                    });
+                    listEl.appendChild(li);
+                });
+            }
+
+            drawGraph();
+        }
+
+        // Event Handlers & Interactivity
+        window.addEventListener('delaunay-loaded', () => {
+            resizeCanvas();
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+
+        // Mouse & Touch Pan / Zoom
+        let pointerDown = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        canvas.addEventListener('mousedown', (e) => {
+            pointerDown = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            if (pointerDown) {
+                const dx = e.clientX - lastX;
+                const dy = e.clientY - lastY;
+                offsetX += dx;
+                offsetY += dy;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                drawGraph();
+                hideTooltip();
+                return;
+            }
+
+            // Check Hover
+            const visibleLandmarks = landmarksData.filter(d => activeCategories[d.category] && (!searchQuery || d.name.toLowerCase().includes(searchQuery) || d.id.toLowerCase().includes(searchQuery)));
+            let found = null;
+            for (const p of visibleLandmarks) {
+                const pos = normToScreen(p.x, p.y);
+                const dist = Math.hypot(pos.x - mouseX, pos.y - mouseY);
+                if (dist < 12) {
+                    found = p;
+                    break;
+                }
+            }
+
+            if (found !== hoveredLandmark) {
+                hoveredLandmark = found;
+                drawGraph();
+                if (hoveredLandmark) {
+                    showTooltip(hoveredLandmark, e.clientX, e.clientY);
+                } else {
+                    hideTooltip();
+                }
+            } else if (hoveredLandmark) {
+                updateTooltipPosition(e.clientX, e.clientY);
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            pointerDown = false;
+        });
+
+        // Click to select node
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const visibleLandmarks = landmarksData.filter(d => activeCategories[d.category] && (!searchQuery || d.name.toLowerCase().includes(searchQuery) || d.id.toLowerCase().includes(searchQuery)));
+            let clicked = null;
+            for (const p of visibleLandmarks) {
+                const pos = normToScreen(p.x, p.y);
+                const dist = Math.hypot(pos.x - mouseX, pos.y - mouseY);
+                if (dist < 15) {
+                    clicked = p;
+                    break;
+                }
+            }
+
+            if (clicked) {
+                updateInspector(clicked);
+            }
+        });
+
+        // Zoom via mouse wheel
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+            const newScale = Math.max(0.5, Math.min(10, scale * zoomFactor));
+
+            offsetX = mouseX - (mouseX - offsetX) * (newScale / scale);
+            offsetY = mouseY - (mouseY - offsetY) * (newScale / scale);
+            scale = newScale;
+
+            drawGraph();
+        }, { passive: false });
+
+        // Tooltip Functions
+        const tooltip = document.getElementById('tooltip');
+        function showTooltip(landmark, clientX, clientY) {
+            const config = categoryConfig[landmark.category];
+            document.getElementById('tooltipBadge').className = `w-2.5 h-2.5 rounded-full ${config.badgeBg}`;
+            document.getElementById('tooltipCategory').textContent = config.name;
+            document.getElementById('tooltipTitle').textContent = landmark.name;
+            document.getElementById('tooltipId').textContent = landmark.id;
+            document.getElementById('tooltipX').textContent = landmark.x.toFixed(1);
+            document.getElementById('tooltipY').textContent = landmark.y.toFixed(1);
+
+            tooltip.classList.remove('hidden');
+            updateTooltipPosition(clientX, clientY);
+        }
+
+        function updateTooltipPosition(clientX, clientY) {
+            tooltip.style.left = `${clientX + 15}px`;
+            tooltip.style.top = `${clientY + 15}px`;
+        }
+
+        function hideTooltip() {
+            tooltip.classList.add('hidden');
+        }
+
+        // Control Buttons & Filters
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            const container = canvas.parentElement;
+            const cx = container.clientWidth / 2;
+            const cy = container.clientHeight / 2;
+            const newScale = Math.min(10, scale * 1.25);
+            offsetX = cx - (cx - offsetX) * (newScale / scale);
+            offsetY = cy - (cy - offsetY) * (newScale / scale);
+            scale = newScale;
+            drawGraph();
+        });
+
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            const container = canvas.parentElement;
+            const cx = container.clientWidth / 2;
+            const cy = container.clientHeight / 2;
+            const newScale = Math.max(0.5, scale / 1.25);
+            offsetX = cx - (cx - offsetX) * (newScale / scale);
+            offsetY = cy - (cy - offsetY) * (newScale / scale);
+            scale = newScale;
+            drawGraph();
+        });
+
+        document.getElementById('resetViewBtn').addEventListener('click', () => {
+            scale = 1;
+            offsetX = 0;
+            offsetY = 0;
+            drawGraph();
+        });
+
+        const toggleEdgesBtn = document.getElementById('toggleEdgesBtn');
+        toggleEdgesBtn.addEventListener('click', () => {
+            showEdges = !showEdges;
+            toggleEdgesBtn.innerHTML = `<i class="fa-solid fa-network-wired"></i><span class="hidden md:inline">Edges: ${showEdges ? 'On' : 'Off'}</span>`;
+            if (showEdges) {
+                toggleEdgesBtn.className = "bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-md shadow-indigo-600/20";
+            } else {
+                toggleEdgesBtn.className = "bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-sm";
+            }
+            drawGraph();
+        });
+
+        // Map Image Background Toggle & Opacity Slider
+        const toggleMapBgBtn = document.getElementById('toggleMapBgBtn');
+        toggleMapBgBtn.addEventListener('click', () => {
+            showMapBg = !showMapBg;
+            toggleMapBgBtn.innerHTML = `<i class="fa-solid fa-image"></i><span class="hidden md:inline">Map Image: ${showMapBg ? 'On' : 'Off'}</span>`;
+            if (showMapBg) {
+                toggleMapBgBtn.className = "bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-md shadow-indigo-600/20";
+            } else {
+                toggleMapBgBtn.className = "bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs px-3 py-2 rounded-lg flex items-center space-x-1.5 transition shadow-sm";
+            }
+            drawGraph();
+        });
+
+        const mapOpacitySlider = document.getElementById('mapOpacitySlider');
+        mapOpacitySlider.addEventListener('input', (e) => {
+            mapOpacity = parseInt(e.target.value, 10) / 100;
+            document.getElementById('opacityVal').textContent = `${e.target.value}%`;
+            drawGraph();
+        });
+
+        // Search Input
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            searchQuery = e.target.value.toLowerCase().trim();
+            drawGraph();
+        });
+
+        // Category Checkbox Filters
+        document.querySelectorAll('#categoryFilters input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const cat = e.target.dataset.category;
+                activeCategories[cat] = e.target.checked;
+                drawGraph();
+            });
+        });
+
+        // Initial Load Draw
+        window.onload = function() {
+            // Update counts in UI
+            for (const [cat, count] of Object.entries({
+                forest: 6,
+                mountain: 14,
+                lake: 9,
+                open_land: 12,
+                town: 16
+            })) {
+                const el = document.getElementById(`count-${cat}`);
+                if (el) el.textContent = count;
+            }
+            resizeCanvas();
+        };
+    </script>
+</body>
+</html>
